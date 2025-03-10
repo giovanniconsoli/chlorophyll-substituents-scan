@@ -1,3 +1,16 @@
+__authors__ = ["Giovanni Consoli", "Marco Sandrin", "James W. Murray"]
+__contact__ = "gconsoli@ic.ac.uk"
+__copyright__ = "Copyright 2025, Imperial College London"
+__credits__ = ["Giovanni Consoli", "Marco Sandrin", "James W. Murray"]
+__date__ = "2025/03/10"
+__deprecated__ = False
+__email__ = "gconsoli@ic.ac.uk"
+__license__ = "MIT"
+__maintainer__ = "Giovanni Consoli"
+__status__ = "Production"
+__version__ = "0.0.1"
+
+
 import pickle
 import argparse
 from collections import namedtuple
