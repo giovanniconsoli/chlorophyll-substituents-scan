@@ -4,9 +4,9 @@
 
 The assignment of different chlorophyll substituents in CryoEM maps is proven to be a difficult task, and high resolution maps are needed to be able to distunguish the Coulomb potential of single atoms. The problem is exacerbated by the increased negative potential around formyl groups, present at the C7 position in Chl b, at the C2 position in Chl f and at the C3 position (instead of a vinyl) in Chl d.
 
-Inspired by the Cone scan methods from Gisriel et al (https://doi.org/10.1038/s42003-020-01139-1), this script extends the method to pick up a more complete fingerprint of chlorophyll substituents.
+Inspired by the Cone scan methods from Gisriel et al. ([10.1038/s42003-020-01139-1](https://doi.org/10.1038/s42003-020-01139-1)), this script extends the method to pick up a more complete fingerprint of chlorophyll substituents.
 
-The following analysis has been used in https://doi.org/10.1101/2024.08.06.606606.
+The following analysis has been used in [10.1126/science.ado6830](https://doi.org/10.1126/science.ado6830).
 
 ## chl_analyzer.py
 
