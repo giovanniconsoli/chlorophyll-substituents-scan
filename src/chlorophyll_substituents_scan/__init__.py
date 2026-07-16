@@ -75,6 +75,15 @@ def main() -> None:
         default=None,
         help=f"Spacing between scan distances (angstrom). Default: {DEFAULT_STEP}.",
     )
+    parser.add_argument(
+        "-p",
+        "--save-pdb",
+        action="store_true",
+        help=(
+            "Write the per-chlorophyll PDB files to "
+            "'pdb_intensity/' and 'pdb_zscores/'. Off by default."
+        ),
+    )
     args = parser.parse_args()
 
     analyzer = Analyzer(
@@ -86,5 +95,6 @@ def main() -> None:
         geometry=args.geometry,
         max_distance=args.max_distance,
         step=args.step,
+        save_pdb=args.save_pdb,
     )
     analyzer.run()

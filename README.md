@@ -33,7 +33,11 @@ The algorithm is identical for both: a cone is simply the hemisphere restricted 
 
 Both geometries scan the same distance grid by default: 0 to **2.5 Å** inclusive, in steps of **0.1 Å**. Override either end with `--max-distance` / `--step` (`max_distance=` / `step=` in the Python API); the grid always starts at 0 and includes the maximum.
 
-Moreover, it outputs a series of PDB files (2 for each chlorophyll substituent in the map) that can be used to visualize the raw ESP and the Z-scores of the ESP directly in [Chimera](https://www.rbvi.ucsf.edu/chimera/). To do this, open the map and the `.pdb` file of interest, select it and color it by B-factor.
+### PDB files
+
+With `--save-pdb` (`save_pdb=True` in the Python API), the analysis also outputs a series of PDB files (2 for each chlorophyll substituent in the map) that can be used to visualize the raw ESP and the Z-scores of the ESP directly in [Chimera](https://www.rbvi.ucsf.edu/chimera/). To do this, open the map and the `.pdb` file of interest, select it and color it by B-factor.
+
+This is off by default: the export is two files per chlorophyll *and* substituent, which quickly fills the output directory, and it is only needed for visual inspection. The three pickle files are written either way, and the `pdb_intensity/` and `pdb_zscores/` subdirectories are only created when the flag is set.
 
 ### Installation
 
@@ -51,6 +55,7 @@ chlorophyll-analyzer \
     --reference C12 \
     --geometry cone \             # cone (default) or hemisphere
     --max-distance 2.5 \          # optional, this is the default
+    --save-pdb \                  # optional, off by default
     --locres path/to/locres.map   # optional
 ```
 
@@ -63,6 +68,7 @@ chlorophyll-analyzer \
 | geometry | `-g`, `--geometry` | no | Scan geometry: `cone` (default) or `hemisphere` |
 | max distance | `-d`, `--max-distance` | no | Maximum scan distance in Å (default `2.5`) |
 | step | `-t`, `--step` | no | Spacing between scan distances in Å (default `0.1`) |
+| save PDB | `-p`, `--save-pdb` | no | Write the PDB files (off by default) |
 | locres | `-l`, `--locres` | no | Local resolution map |
 
 The same interface is available as a module: `python -m chlorophyll_substituents_scan ...`.
@@ -78,6 +84,7 @@ analyzer = Analyzer(
     outdir="output/",
     reference="C12",
     geometry="cone",  # or "hemisphere" for a 3-D aperture sweep
+    save_pdb=False,   # write the PDB files; off by default
     locres=None,      # optional local resolution map
 )
 results_df, stats_df, zscores_df = analyzer.run()

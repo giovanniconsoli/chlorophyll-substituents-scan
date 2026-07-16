@@ -5,8 +5,8 @@ through the CryoEM density map around the bond axis of its reference atoms.
 Z-scores against a reference substituent then expose the positions whose density
 departs from it.
 
-:class:`Analyzer` runs the analysis and writes pickled dataframes plus
-PDB files.
+:class:`Analyzer` runs the analysis and writes pickled dataframes, plus
+PDB files when ``save_pdb`` is set.
 """
 
 import pickle
@@ -155,6 +155,11 @@ class Analyzer:
         Spacing between successive scan distances, in ångström. When ``None``
         (default) the selected geometry keeps its built-in step. See
         :func:`get_geometry`.
+    save_pdb : bool, optional
+        Write the per-chlorophyll PDB files. ``False`` by default,
+        since the export is two files per chlorophyll and substituent and is
+        only needed for visual inspection; the dataframes are always written
+        either way.
 
     Attributes
     ----------
@@ -189,6 +194,7 @@ class Analyzer:
         geometry: "str | Geometry" = "cone",
         max_distance: float | None = None,
         step: float | None = None,
+        save_pdb: bool = False,
     ) -> None:
         validate_ref_substituent(reference)
 
@@ -198,6 +204,7 @@ class Analyzer:
         self.out_dir = Path(outdir)
         self.ref_substituent = reference
         self.geometry = get_geometry(geometry, max_distance, step)
+        self.save_pdb = save_pdb
 
         self.chlorophylls: list[dict] | None = None
         self.results_df: pd.DataFrame | None = None
@@ -207,9 +214,9 @@ class Analyzer:
     def run(self) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """Scan every chlorophyll and write the results to ``outdir``.
 
-        Writes three pickled dataframes, plus one PDB file per chlorophyll and
-        substituent under ``pdb_intensity/`` (scan amplitudes) and ``pdb_zscores/``
-        (z-scores).
+        Writes three pickled dataframes. When ``save_pdb`` is set, also writes
+        one PDB file per chlorophyll and substituent under ``pdb_intensity/``
+        (scan amplitudes) and ``pdb_zscores/`` (z-scores).
 
         Returns
         -------
@@ -251,7 +258,8 @@ class Analyzer:
 
         base_filename = Path(self.structure_file).stem
         self._save_dataframes(base_filename, results_df, stats_df, zscores_df)
-        self._save_scan_pdb(chlorophylls, zscores_df)
+        if self.save_pdb:
+            self._save_scan_pdb(chlorophylls, zscores_df)
 
         return results_df, stats_df, zscores_df
 
@@ -364,6 +372,9 @@ class Analyzer:
         return zscores_df
 
     def _create_output_directories(self) -> None:
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        if not self.save_pdb:
+            return
         for sub_dir in ["pdb_intensity", "pdb_zscores"]:
             path = self.out_dir / sub_dir
             path.mkdir(parents=True, exist_ok=True)
