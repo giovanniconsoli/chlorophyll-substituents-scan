@@ -13,9 +13,9 @@ __version__ = "0.1.0"
 
 import argparse
 
-from .analyzer import Analyzer, validate_ref_substituent
+from .analyzer import GEOMETRIES, Analyzer, get_geometry, validate_ref_substituent
 
-__all__ = ["Analyzer", "main", "validate_ref_substituent"]
+__all__ = ["Analyzer", "get_geometry", "main", "validate_ref_substituent"]
 
 
 def main() -> None:
@@ -43,6 +43,14 @@ def main() -> None:
     parser.add_argument(
         "-r", "--reference", type=str, required=True, help="Reference substituent"
     )
+    parser.add_argument(
+        "-g",
+        "--geometry",
+        type=str,
+        default="cone",
+        choices=sorted(GEOMETRIES),
+        help="Scan geometry: 'cone' (2-D, default) or 'hemisphere' (3-D)",
+    )
     args = parser.parse_args()
 
     analyzer = Analyzer(
@@ -51,5 +59,6 @@ def main() -> None:
         outdir=args.outdir,
         reference=args.reference,
         locres=args.locres,
+        geometry=args.geometry,
     )
     analyzer.run()

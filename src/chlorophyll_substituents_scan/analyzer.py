@@ -1,4 +1,4 @@
-"""Cone-scan analysis of chlorophyll substituents.
+"""Cone- and hemisphere-scan analysis of chlorophyll substituents.
 
 Each substituent position (:data:`SUBSTITUENTS`) is scanned by sweeping a probe
 through the CryoEM density map around the bond axis of its reference atoms.
@@ -12,6 +12,7 @@ PDB files.
 import pickle
 import warnings
 from pathlib import Path
+from typing import NamedTuple
 
 import gemmi
 import numpy as np
@@ -25,17 +26,82 @@ REFS = [
     ["C2C", "C3C", "CAC", "C4C"],  # C8
     ["C1D", "C2D", "CMD", "C3D"],  # C12 (always methyl)
 ]
-CONE_APERTURE = 120
-SCAN_DISTANCES = np.arange(0, 2.6, 0.1)
-SCAN_ANGLES = np.arange(0, 360, 5)
 SUBSTITUENTS = ["C2", "C3", "C7", "C8", "C12"]
 
 
-class Analyzer:
-    """Cone-scan analysis of chlorophyll substituents.
+# A geometry is fully described by the aperture(s), distances and angles it
+# samples. The cone is the special case of a single aperture; the hemisphere
+# sweeps a range of apertures and therefore gains an extra array axis.
+class Geometry(NamedTuple):
+    name: str
+    file_token: str
+    apertures: np.ndarray
+    distances: np.ndarray
+    angles: np.ndarray
 
-    A single fixed aperture (120°) is scanned over a ``distance x angle`` grid,
-    so each substituent's ESP is a 2-D array.
+
+CONE_GEOMETRY = Geometry(
+    name="cone",
+    file_token="cone",
+    apertures=np.array([120.0]),
+    distances=np.arange(0, 2.6, 0.1),
+    angles=np.arange(0, 360, 5),
+)
+HEMISPHERE_GEOMETRY = Geometry(
+    name="hemisphere",
+    file_token="sphere",
+    apertures=np.arange(90, 181, 10, dtype=float),
+    distances=np.round(np.arange(0, 2.1, 0.1), 1),
+    angles=np.arange(0, 360, 10, dtype=float),
+)
+GEOMETRIES = {"cone": CONE_GEOMETRY, "hemisphere": HEMISPHERE_GEOMETRY}
+
+
+def get_geometry(geometry: "str | Geometry") -> Geometry:
+    """Resolve a geometry name to its :data:`Geometry`.
+
+    Parameters
+    ----------
+    geometry : str or Geometry
+        A key of :data:`GEOMETRIES` (case-insensitive), or an already-resolved
+        ``Geometry``, which is returned unchanged.
+
+    Returns
+    -------
+    Geometry
+        The resolved geometry.
+
+    Raises
+    ------
+    ValueError
+        If ``geometry`` is not a known geometry name.
+    """
+    if isinstance(geometry, Geometry):
+        return geometry
+    key = str(geometry).lower()
+    if key not in GEOMETRIES:
+        raise ValueError(
+            f"Unknown geometry {geometry!r}. Choose from {sorted(GEOMETRIES)}."
+        )
+    return GEOMETRIES[key]
+
+
+class Analyzer:
+    """Cone- or hemisphere-scan analysis of chlorophyll substituents.
+
+    The scan geometry is selected with ``geometry``. Both geometries share the
+    same algorithm; only the grid that is sampled changes, since a cone is just
+    the hemisphere restricted to a single aperture:
+
+    ``"cone"`` (default)
+        A single fixed aperture (120°) scanned over a ``distance x angle`` grid,
+        so each substituent's ESP is a **2-D** array.
+    ``"hemisphere"``
+        A range of apertures (90°…180°) scanned, adding an extra axis, so each
+        substituent's ESP is a **3-D** ``aperture x distance x angle`` array.
+
+    The downstream statistics, z-scores and PDB export are rank-agnostic
+    and work with either.
 
     Parameters
     ----------
@@ -51,6 +117,8 @@ class Analyzer:
     locres : str or None, optional
         Path to a local resolution map file. When omitted, the per-chlorophyll
         Mg local resolution is reported as ``0``.
+    geometry : str or Geometry, optional
+        Scan geometry, ``"cone"`` (default) or ``"hemisphere"``.
 
     Attributes
     ----------
@@ -66,7 +134,8 @@ class Analyzer:
     Raises
     ------
     ValueError
-        If ``reference`` is not a known substituent.
+        If ``reference`` is not a known substituent, or ``geometry`` is not a
+        known geometry.
 
     Examples
     --------
@@ -81,6 +150,7 @@ class Analyzer:
         outdir: str,
         reference: str,
         locres: str | None = None,
+        geometry: "str | Geometry" = "cone",
     ) -> None:
         validate_ref_substituent(reference)
 
@@ -89,6 +159,7 @@ class Analyzer:
         self.locres_file = locres
         self.out_dir = Path(outdir)
         self.ref_substituent = reference
+        self.geometry = get_geometry(geometry)
 
         self.chlorophylls: list[dict] | None = None
         self.results_df: pd.DataFrame | None = None
@@ -126,6 +197,12 @@ class Analyzer:
 
         chlorophylls = self._analyze_chlorophylls(structure, eden_map, loc_res_map)
         results_df = self._get_df(chlorophylls)
+        results_df.attrs.update(
+            geometry=self.geometry.name,
+            apertures=self.geometry.apertures.tolist(),
+            distances=self.geometry.distances.tolist(),
+            angles=self.geometry.angles.tolist(),
+        )
         stats_df = self._get_statistics_df(results_df)
         zscores_df = self._get_zscores_df(results_df, stats_df)
 
@@ -136,7 +213,7 @@ class Analyzer:
 
         base_filename = Path(self.structure_file).stem
         self._save_dataframes(base_filename, results_df, stats_df, zscores_df)
-        self._save_cone_pdb(chlorophylls, zscores_df)
+        self._save_scan_pdb(chlorophylls, zscores_df)
 
         return results_df, stats_df, zscores_df
 
@@ -146,15 +223,19 @@ class Analyzer:
         emap: gemmi.Ccp4Map,
         loc_res_map: gemmi.Ccp4Map | None,
     ) -> list[dict]:
+        geometry = self.geometry
         chlorophylls = _get_chlorophylls(structure)
 
-        n_dist = len(SCAN_DISTANCES)
-        n_ang = len(SCAN_ANGLES)
+        n_ap = len(geometry.apertures)
+        n_dist = len(geometry.distances)
+        n_ang = len(geometry.angles)
 
         for chl in chlorophylls:
             chl["loc_res_Mg"] = _get_mg_res(chl["chl_structure"], loc_res_map)
-            chl["scan_distances"] = SCAN_DISTANCES
-            chl["scan_angles"] = SCAN_ANGLES
+            chl["geometry"] = geometry.name
+            chl["scan_apertures"] = geometry.apertures
+            chl["scan_distances"] = geometry.distances
+            chl["scan_angles"] = geometry.angles
 
             for ref, substituent in zip(REFS, SUBSTITUENTS, strict=True):
                 # The first three reference atoms define the local scan frame.
@@ -162,15 +243,22 @@ class Analyzer:
                     chl["chl_structure"].find_atom(atom, "*") for atom in ref[:3]
                 ]
 
-                amps = np.empty((n_dist, n_ang))
-                positions = np.empty((n_dist, n_ang, 3))
-                for i_d, distance in enumerate(SCAN_DISTANCES):
-                    vec0 = _new_position(CONE_APERTURE, distance, ref_atoms)
-                    scan_amps, map_positions = _calculate_scan_amps(
-                        ref_atoms, vec0, emap
-                    )
-                    amps[i_d] = scan_amps
-                    positions[i_d] = map_positions
+                amps = np.empty((n_ap, n_dist, n_ang))
+                positions = np.empty((n_ap, n_dist, n_ang, 3))
+                for i_ap, aperture in enumerate(geometry.apertures):
+                    for i_d, distance in enumerate(geometry.distances):
+                        vec0 = _new_position(aperture, distance, ref_atoms)
+                        scan_amps, map_positions = _calculate_scan_amps(
+                            ref_atoms, vec0, emap, geometry.angles
+                        )
+                        amps[i_ap, i_d] = scan_amps
+                        positions[i_ap, i_d] = map_positions
+
+                # A cone has a single aperture: drop that axis so the arrays are
+                # 2-D (distance x angle).
+                if n_ap == 1:
+                    amps = amps[0]
+                    positions = positions[0]
 
                 chl[f"scan_amp_{substituent}"] = amps
                 chl[f"map_position_{substituent}"] = positions
@@ -209,6 +297,9 @@ class Analyzer:
         )
 
         for column in SUBSTITUENTS:
+            # Stacking the per-chlorophyll grids along a new leading axis keeps
+            # this shape-agnostic: the reductions collapse that axis whether the
+            # grids are 2-D (cone) or 3-D (hemisphere).
             grids = np.stack(df[column].to_numpy())
             avg = grids.mean(axis=0)
             std_dev = grids.std(axis=0, ddof=1)
@@ -246,17 +337,26 @@ class Analyzer:
         stats_df: pd.DataFrame,
         zscores_df: pd.DataFrame,
     ) -> None:
-        structure_data_filename = self.out_dir / (base_filename + "_conedata.pickle")
-        stats_filename = self.out_dir / (base_filename + "_stats.pickle")
-        zscores_filename = self.out_dir / (base_filename + "_zscores.pickle")
+        token = self.geometry.file_token
 
-        _save_pickle(results_df, structure_data_filename)
-        _save_pickle(stats_df, stats_filename)
-        _save_pickle(zscores_df, zscores_filename)
+        # Cone results use bare ``_stats``/``_zscores`` names; other geometries get a
+        # token prefix so runs of different geometries can share one output
+        # directory without overwriting each other.
+        stats_infix = "" if token == "cone" else f"{token}_"
 
-    def _save_cone_pdb(
+        _save_pickle(results_df, self.out_dir / f"{base_filename}_{token}data.pickle")
+        _save_pickle(
+            stats_df, self.out_dir / f"{base_filename}_{stats_infix}stats.pickle"
+        )
+        _save_pickle(
+            zscores_df,
+            self.out_dir / f"{base_filename}_{stats_infix}zscores.pickle",
+        )
+
+    def _save_scan_pdb(
         self, chlorophylls: list[dict], zscores_df: pd.DataFrame
     ) -> None:
+        geometry = self.geometry
         for chl in chlorophylls:
             for atom, substituent in zip(ATOMS, SUBSTITUENTS, strict=True):
                 amp = chl[f"scan_amp_{substituent}"]
@@ -265,36 +365,23 @@ class Analyzer:
 
                 pdb_lines = []
                 pdb_zsc_lines = []
-                serial = 0
-                for i_d in range(len(SCAN_DISTANCES)):
-                    for i_a, theta in enumerate(SCAN_ANGLES):
-                        angle = int(theta)
-                        x, y, z = pos[i_d, i_a]
-                        # The PDB serial field is 5 characters wide; wrap rather
-                        # than overflow it into the neighbouring column.
-                        pdb_lines.append(
-                            _mock_pdb(
-                                serial % 100000,
-                                angle,
-                                x,
-                                y,
-                                z,
-                                float(amp[i_d, i_a]) * 100,
-                            )
+                # Walk every grid point regardless of rank (2-D cone or 3-D
+                # hemisphere); ``pos`` carries one extra trailing axis of size 3.
+                for serial, idx in enumerate(np.ndindex(amp.shape)):
+                    angle = int(geometry.angles[idx[-1]])
+                    x, y, z = pos[idx]
+                    pdb_lines.append(
+                        _mock_pdb(
+                            serial % 100000, angle, x, y, z, float(amp[idx]) * 100
                         )
-                        pdb_zsc_lines.append(
-                            _mock_pdb(
-                                serial % 100000,
-                                angle,
-                                x,
-                                y,
-                                z,
-                                float(zsc[i_d, i_a]),
-                            )
-                        )
-                        serial += 1
+                    )
+                    pdb_zsc_lines.append(
+                        _mock_pdb(serial % 100000, angle, x, y, z, float(zsc[idx]))
+                    )
 
-                pdb_filepaths = _get_pdb_filepaths(atom, chl, self.out_dir, substituent)
+                pdb_filepaths = _get_pdb_filepaths(
+                    atom, chl, self.out_dir, substituent, geometry
+                )
                 for path, content in zip(
                     pdb_filepaths, [pdb_lines, pdb_zsc_lines], strict=True
                 ):
@@ -405,13 +492,14 @@ def _calculate_scan_amps(
     three_atoms: list[gemmi.Atom],
     vec0: gemmi.Vec3,
     emap: gemmi.Ccp4Map,
+    angles: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     _, atom2, atom3 = three_atoms
     av2, av3 = gemmi.Vec3(*atom2.pos), gemmi.Vec3(*atom3.pos)
     avector = _normalize(av3 - av2)
     scan_amps = []
     map_positions = []
-    for theta in SCAN_ANGLES:
+    for theta in angles:
         p = _increment_torsion(vec0, avector, av3, theta)
         map_pos = gemmi.Position(*p)
         eden = emap.grid.tricubic_interpolation(map_pos)
@@ -468,9 +556,17 @@ def _pdb_string(
 
 
 def _get_pdb_filepaths(
-    atom: str, chl: dict, out_dir: Path, substituent: str
+    atom: str,
+    chl: dict,
+    out_dir: Path,
+    substituent: str,
+    geometry: "str | Geometry",
 ) -> list[Path]:
-    filename = f"cone_{chl['chl_id']}_{chl['chl_structure'].name}_{atom}_{substituent}"
+    geometry = get_geometry(geometry)
+    filename = (
+        f"{geometry.file_token}_{chl['chl_id']}_"
+        f"{chl['chl_structure'].name}_{atom}_{substituent}"
+    )
     return [
         out_dir / "pdb_intensity" / (filename + ".pdb"),
         out_dir / "pdb_zscores" / (filename + ".pdb"),

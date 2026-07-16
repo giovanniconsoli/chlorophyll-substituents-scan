@@ -10,13 +10,24 @@ The following analysis has been used in [10.1126/science.ado6830](https://doi.or
 
 ## Usage
 
-The analysis takes as input a PDB model (.pdb, .cif) and a CryoEM map (.map, .mrc), a reference substituent and an optional local resolution map, and outputs three pickle files:
+The analysis takes as input a PDB model (.pdb, .cif) and a CryoEM map (.map, .mrc), a reference substituent, a scan geometry and an optional local resolution map, and outputs three pickle files:
 
-1) raw ESP cones for each chlorophyll substituent
+1) raw ESP scans for each chlorophyll substituent
 2) Z-scores of the ESP for each chlorophyll substituent relative to the reference substituent selected
 3) average and standard deviation of the reference substituent for a map/model combination, for diagnostic or calculation purposes
 
-Moreover, it outputs a series of PDB files (2 for each chlorophyll substituent in the map) that can be used to visualize the raw ESP and the Z-scores of the ESP directly in [Chimera](https://www.rbvi.ucsf.edu/chimera/). To do this, open the map and the cone.pdb file of interest, select it and color it by B-factor.
+### Scan geometry
+
+Two geometries are available via the `--geometry` flag (`geometry=` in the Python API):
+
+| Geometry | Grid | Array shape per substituent | Output token |
+| --- | --- | --- | --- |
+| `cone` (default) | single 120° aperture × distance × angle | **2-D** `(distance, angle)` | `_conedata` / `_stats` / `_zscores` |
+| `hemisphere` | aperture (90–180°) × distance × angle | **3-D** `(aperture, distance, angle)` | `_spheredata` / `_sphere_stats` / `_sphere_zscores` |
+
+The algorithm is identical for both: a cone is simply the hemisphere restricted to one aperture. `cone` produces a 2-D NumPy array per DataFrame cell; `hemisphere` sweeps a range of apertures, adding an extra axis, so each cell is 3-D. The statistics, Z-scores and PDB export all work with either. A `hemisphere` run can share an output directory with a `cone` run without overwriting it.
+
+Moreover, it outputs a series of PDB files (2 for each chlorophyll substituent in the map) that can be used to visualize the raw ESP and the Z-scores of the ESP directly in [Chimera](https://www.rbvi.ucsf.edu/chimera/). To do this, open the map and the `.pdb` file of interest, select it and color it by B-factor.
 
 ### Installation
 
@@ -32,6 +43,7 @@ chlorophyll-analyzer \
     --map path/to/map.map \
     --outdir output/ \
     --reference C12 \
+    --geometry cone \             # cone (default) or hemisphere
     --locres path/to/locres.map   # optional
 ```
 
@@ -41,6 +53,7 @@ chlorophyll-analyzer \
 | map | `-m`, `--map` | yes | CryoEM map (`.map`, `.mrc`) |
 | outdir | `-o`, `--outdir` | yes | Output directory for the results |
 | reference | `-r`, `--reference` | yes | Reference substituent (`C2`, `C3`, `C7`, `C8`, `C12`) |
+| geometry | `-g`, `--geometry` | no | Scan geometry: `cone` (default) or `hemisphere` |
 | locres | `-l`, `--locres` | no | Local resolution map |
 
 The same interface is available as a module: `python -m chlorophyll_substituents_scan ...`.
@@ -55,6 +68,7 @@ analyzer = Analyzer(
     density_map="path/to/map.map",
     outdir="output/",
     reference="C12",
+    geometry="cone",  # or "hemisphere" for a 3-D aperture sweep
     locres=None,      # optional local resolution map
 )
 results_df, stats_df, zscores_df = analyzer.run()
