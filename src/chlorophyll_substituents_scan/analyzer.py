@@ -10,7 +10,7 @@ PDB files.
 """
 
 import pickle
-from collections import namedtuple
+import warnings
 from pathlib import Path
 
 import gemmi
@@ -25,11 +25,10 @@ REFS = [
     ["C2C", "C3C", "CAC", "C4C"],  # C8
     ["C1D", "C2D", "CMD", "C3D"],  # C12 (always methyl)
 ]
+CONE_APERTURE = 120
 SCAN_DISTANCES = np.arange(0, 2.6, 0.1)
 SCAN_ANGLES = np.arange(0, 360, 5)
 SUBSTITUENTS = ["C2", "C3", "C7", "C8", "C12"]
-
-Cone = namedtuple("Cone", ["atoms", "length", "angle", "group"])
 
 
 class Analyzer:
@@ -108,7 +107,15 @@ class Analyzer:
         tuple[pandas.DataFrame, pandas.DataFrame, pandas.DataFrame]
             The ``(results_df, stats_df, zscores_df)`` dataframes, also stored
             as attributes on the instance.
+
+        Raises
+        ------
+        ValueError
+            If the structure holds fewer than two complete chlorophylls, which
+            leaves the per-substituent spread undefined.
         """
+        self._create_output_directories()
+
         eden_map = gemmi.read_ccp4_map(self.map_file, setup=True)
         loc_res_map = (
             gemmi.read_ccp4_map(self.locres_file, setup=True)
@@ -127,8 +134,6 @@ class Analyzer:
         self.stats_df = stats_df
         self.zscores_df = zscores_df
 
-        self._create_output_directories()
-
         base_filename = Path(self.structure_file).stem
         self._save_dataframes(base_filename, results_df, stats_df, zscores_df)
         self._save_cone_pdb(chlorophylls, zscores_df)
@@ -143,37 +148,32 @@ class Analyzer:
     ) -> list[dict]:
         chlorophylls = _get_chlorophylls(structure)
 
+        n_dist = len(SCAN_DISTANCES)
+        n_ang = len(SCAN_ANGLES)
+
         for chl in chlorophylls:
             chl["loc_res_Mg"] = _get_mg_res(chl["chl_structure"], loc_res_map)
             chl["scan_distances"] = SCAN_DISTANCES
             chl["scan_angles"] = SCAN_ANGLES
-            for distance in SCAN_DISTANCES:
-                for cone in _get_cones(distance):
-                    ref_atoms = [
-                        chl["chl_structure"].find_atom(atom, "*") for atom in cone.atoms
-                    ]
-                    vec0 = _new_position(cone.angle, cone.length, ref_atoms[:3])
+
+            for ref, substituent in zip(REFS, SUBSTITUENTS, strict=True):
+                # The first three reference atoms define the local scan frame.
+                ref_atoms = [
+                    chl["chl_structure"].find_atom(atom, "*") for atom in ref[:3]
+                ]
+
+                amps = np.empty((n_dist, n_ang))
+                positions = np.empty((n_dist, n_ang, 3))
+                for i_d, distance in enumerate(SCAN_DISTANCES):
+                    vec0 = _new_position(CONE_APERTURE, distance, ref_atoms)
                     scan_amps, map_positions = _calculate_scan_amps(
-                        ref_atoms[:3], vec0, emap
+                        ref_atoms, vec0, emap
                     )
+                    amps[i_d] = scan_amps
+                    positions[i_d] = map_positions
 
-                    for atom, substituent in zip(ATOMS, SUBSTITUENTS):
-                        attr_types = [
-                            f"scan_amp_{substituent}",
-                            f"map_position_{substituent}",
-                        ]
-                        values = [scan_amps, map_positions]
-                        if atom in cone.atoms:
-                            for attr, value in zip(attr_types, values):
-                                if attr in chl.keys():
-                                    chl[attr] = np.vstack((chl[attr], value))
-                                else:
-                                    chl[attr] = value
-
-            for substituent in SUBSTITUENTS:
-                chl[f"map_position_{substituent}"] = chl[
-                    f"map_position_{substituent}"
-                ].reshape(len(SCAN_DISTANCES), len(SCAN_ANGLES), 3)
+                chl[f"scan_amp_{substituent}"] = amps
+                chl[f"map_position_{substituent}"] = positions
 
         return chlorophylls
 
@@ -190,6 +190,15 @@ class Analyzer:
         return pd.DataFrame(chlorophylls_dict)
 
     def _get_statistics_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        num_chl = df.shape[0]
+        if num_chl < 2:
+            raise ValueError(
+                f"Need at least 2 chlorophylls to compute statistics, found "
+                f"{num_chl}. Each substituent is scored against the spread "
+                f"across all chlorophylls in the structure, which is undefined "
+                f"for a single one."
+            )
+
         stats_df = pd.DataFrame(
             index=[
                 "Average",
@@ -199,13 +208,10 @@ class Analyzer:
             ]
         )
 
-        num_chl = df.shape[0]
         for column in SUBSTITUENTS:
-            avg = df[column].mean()
-            std_dev = np.zeros((len(SCAN_DISTANCES), len(SCAN_ANGLES)))
-            for chl in df[column]:
-                std_dev += (chl - avg) ** 2
-            std_dev = np.sqrt(std_dev / num_chl)
+            grids = np.stack(df[column].to_numpy())
+            avg = grids.mean(axis=0)
+            std_dev = grids.std(axis=0, ddof=1)
             stats_df[column] = [
                 avg,
                 std_dev,
@@ -248,39 +254,56 @@ class Analyzer:
         _save_pickle(stats_df, stats_filename)
         _save_pickle(zscores_df, zscores_filename)
 
-    def _save_cone_pdb(self, chlorophylls: list[dict], zscores: pd.DataFrame) -> None:
-        theta: int
+    def _save_cone_pdb(
+        self, chlorophylls: list[dict], zscores_df: pd.DataFrame
+    ) -> None:
         for chl in chlorophylls:
-            for atom, substituent in zip(ATOMS, SUBSTITUENTS):
+            for atom, substituent in zip(ATOMS, SUBSTITUENTS, strict=True):
+                amp = chl[f"scan_amp_{substituent}"]
+                pos = chl[f"map_position_{substituent}"]
+                zsc = zscores_df.loc[chl["chl_id"], substituent]
+
                 pdb_lines = []
                 pdb_zsc_lines = []
-                for ii, _ in enumerate(SCAN_DISTANCES):
-                    for jj, theta in enumerate(SCAN_ANGLES):
-                        pdb_line = _mock_pdb(
-                            jj,
-                            theta,
-                            *chl[f"map_position_{substituent}"][ii, jj, :],
-                            chl[f"scan_amp_{substituent}"][ii, jj] * 100,
+                serial = 0
+                for i_d in range(len(SCAN_DISTANCES)):
+                    for i_a, theta in enumerate(SCAN_ANGLES):
+                        angle = int(theta)
+                        x, y, z = pos[i_d, i_a]
+                        # The PDB serial field is 5 characters wide; wrap rather
+                        # than overflow it into the neighbouring column.
+                        pdb_lines.append(
+                            _mock_pdb(
+                                serial % 100000,
+                                angle,
+                                x,
+                                y,
+                                z,
+                                float(amp[i_d, i_a]) * 100,
+                            )
                         )
-                        pdb_zsc_line = _mock_pdb(
-                            jj,
-                            theta,
-                            *chl[f"map_position_{substituent}"][ii, jj, :],
-                            zscores.loc[chl["chl_id"], substituent][ii, jj],
+                        pdb_zsc_lines.append(
+                            _mock_pdb(
+                                serial % 100000,
+                                angle,
+                                x,
+                                y,
+                                z,
+                                float(zsc[i_d, i_a]),
+                            )
                         )
-                        pdb_lines.append(pdb_line)
-                        pdb_zsc_lines.append(pdb_zsc_line)
+                        serial += 1
 
-                pdb_filepaths = _get_pdb_filepaths(
-                    atom, chl, self.out_dir, substituent
-                )
-                for path, content in zip(pdb_filepaths, [pdb_lines, pdb_zsc_lines]):
+                pdb_filepaths = _get_pdb_filepaths(atom, chl, self.out_dir, substituent)
+                for path, content in zip(
+                    pdb_filepaths, [pdb_lines, pdb_zsc_lines], strict=True
+                ):
                     with open(path, "w", newline="\n") as file:
                         file.writelines(content)
 
 
 def validate_ref_substituent(ref: str) -> None:
-    """Check that ``ref`` is a substituent z-scores can be taken against.
+    """Check that ``ref`` names a scannable substituent.
 
     Parameters
     ----------
@@ -302,7 +325,7 @@ def _get_chlorophylls(structure: gemmi.Structure) -> list[dict]:
     for model in sel.models(structure):
         for chain in sel.chains(model):
             for chl in sel.residues(chain):
-                if all([chl.find_atom(at, "*") for ref in REFS for at in ref]):
+                if all(chl.find_atom(at, "*") for ref in REFS for at in ref):
                     chl_dict = {
                         "chl_id": f"{chain.name}{chl.seqid.num}",
                         "chain": chain,
@@ -311,8 +334,10 @@ def _get_chlorophylls(structure: gemmi.Structure) -> list[dict]:
                     }
                     chlorophylls.append(chl_dict)
                 else:
-                    print(
-                        f"Chlorophyll {chain.name}{chl.seqid.num} is missing one or more reference atoms."
+                    warnings.warn(
+                        f"Chlorophyll {chain.name}{chl.seqid.num} is missing one or "
+                        "more reference atoms.",
+                        stacklevel=2,
                     )
     return chlorophylls
 
@@ -330,20 +355,11 @@ def _get_mg_res(
     return mg_res
 
 
-def _get_cones(distance: float) -> list[Cone]:
-    cones = []
-    for ref, sub in zip(REFS, SUBSTITUENTS):
-        cone_aperture = 120
-        cone = Cone(ref, distance, cone_aperture, sub)
-        cones.append(cone)
-    return cones
-
-
 def _new_position(
-    bond_angle: int, bond_length: float, three_atoms: list[gemmi.Atom]
+    bond_angle: float, bond_length: float, three_atoms: list[gemmi.Atom]
 ) -> gemmi.Vec3:
     ap1, ap2, ap3 = [a.pos for a in three_atoms]
-    av1, av2, av3 = [gemmi.Vec3(*[a for a in ap.pos]) for ap in three_atoms]
+    av2, av3 = gemmi.Vec3(*ap2), gemmi.Vec3(*ap3)
     avector = _normalize(av3 - av2)
     theta = 180 - bond_angle
     pvector = _normalize(_perpendicular_vector(avector))
@@ -354,7 +370,7 @@ def _new_position(
             + pvector * bond_length * np.sin(np.radians(theta))
         )
     )
-    new_vec = gemmi.Vec3(*[a for a in new_pos])
+    new_vec = gemmi.Vec3(*new_pos)
     dihedral = np.degrees(gemmi.calculate_dihedral(ap1, ap2, ap3, new_pos))
     return _increment_torsion(new_vec, avector, av3, -dihedral)
 
@@ -366,8 +382,7 @@ def _normalize(vector: gemmi.Vec3) -> gemmi.Vec3:
 def _perpendicular_vector(vector: gemmi.Vec3) -> gemmi.Vec3:
     # get a perpendicular vector, swap y,x, change a sign and zero z, dot product = 0
     # later we measure the dihedral and adjust position to dihedral of 0
-    x, y, z = vector
-    return gemmi.Vec3(y, -x, 0)
+    return gemmi.Vec3(vector.y, -vector.x, 0)
 
 
 def _increment_torsion(
@@ -391,17 +406,17 @@ def _calculate_scan_amps(
     vec0: gemmi.Vec3,
     emap: gemmi.Ccp4Map,
 ) -> tuple[np.ndarray, np.ndarray]:
-    _, av2, av3 = [gemmi.Vec3(*[a for a in ap.pos]) for ap in three_atoms]
+    _, atom2, atom3 = three_atoms
+    av2, av3 = gemmi.Vec3(*atom2.pos), gemmi.Vec3(*atom3.pos)
     avector = _normalize(av3 - av2)
     scan_amps = []
     map_positions = []
-    theta: int
-    for n, theta in enumerate(SCAN_ANGLES):
+    for theta in SCAN_ANGLES:
         p = _increment_torsion(vec0, avector, av3, theta)
         map_pos = gemmi.Position(*p)
         eden = emap.grid.tricubic_interpolation(map_pos)
         scan_amps.append(eden)
-        map_positions.append([pos for pos in map_pos])
+        map_positions.append(map_pos.tolist())
 
     return np.array(scan_amps), np.array(map_positions)
 
@@ -446,7 +461,8 @@ def _pdb_string(
 ) -> str:
     # https://cupnet.net/pdb-format/
     return (
-        f"{atom:6s}{serial:5d} {name:^4s}{alt_loc:1s}{res_name:3s} {chain:1s}{resi:4d}{ins:1s}   "
+        f"{atom:6s}{serial:5d} {name:^4s}{alt_loc:1s}{res_name:3s} "
+        f"{chain:1s}{resi:4d}{ins:1s}   "
         f"{x:8.3f}{y:8.3f}{z:8.3f}{occ:6.2f}{temp:6.2f}\n"
     )
 
