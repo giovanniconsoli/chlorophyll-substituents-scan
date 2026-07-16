@@ -29,6 +29,18 @@ REFS = [
 SUBSTITUENTS = ["C2", "C3", "C7", "C8", "C12"]
 
 
+# Both geometries share the distance and angle grids; only the apertures differ.
+# +step/2 keeps the endpoint despite float drift; round clears arange noise.
+DEFAULT_MAX_DISTANCE = 2.5
+DEFAULT_STEP = 0.1
+DEFAULT_DISTANCES = np.round(
+    np.arange(0.0, DEFAULT_MAX_DISTANCE + DEFAULT_STEP / 2, DEFAULT_STEP), 3
+)
+# 72 angles at a 5 degree step.
+DEFAULT_ANGLE_STEP = 5.0
+DEFAULT_ANGLES = np.arange(0.0, 360.0, DEFAULT_ANGLE_STEP)
+
+
 # A geometry is fully described by the aperture(s), distances and angles it
 # samples. The cone is the special case of a single aperture; the hemisphere
 # sweeps a range of apertures and therefore gains an extra array axis.
@@ -42,45 +54,65 @@ class Geometry(NamedTuple):
 CONE_GEOMETRY = Geometry(
     name="cone",
     apertures=np.array([120.0]),
-    distances=np.arange(0, 2.6, 0.1),
-    angles=np.arange(0, 360, 5),
+    distances=DEFAULT_DISTANCES,
+    angles=DEFAULT_ANGLES,
 )
 HEMISPHERE_GEOMETRY = Geometry(
     name="hemisphere",
     apertures=np.arange(90, 181, 10, dtype=float),
-    distances=np.round(np.arange(0, 2.1, 0.1), 1),
-    angles=np.arange(0, 360, 10, dtype=float),
+    distances=DEFAULT_DISTANCES,
+    angles=DEFAULT_ANGLES,
 )
 GEOMETRIES = {"cone": CONE_GEOMETRY, "hemisphere": HEMISPHERE_GEOMETRY}
 
 
-def get_geometry(geometry: "str | Geometry") -> Geometry:
+def get_geometry(
+    geometry: "str | Geometry",
+    max_distance: float | None = None,
+    step: float | None = None,
+) -> Geometry:
     """Resolve a geometry name to its :data:`Geometry`.
 
     Parameters
     ----------
     geometry : str or Geometry
-        A key of :data:`GEOMETRIES` (case-insensitive), or an already-resolved
-        ``Geometry``, which is returned unchanged.
+        A key of :data:`GEOMETRIES` (case-insensitive), or a ``Geometry``.
+    max_distance : float or None, optional
+        Maximum distance of the scan grid, in ångström. Defaults to the
+        selected geometry's built-in maximum.
+    step : float or None, optional
+        Spacing between successive scan distances, in ångström. Defaults to the
+        selected geometry's built-in step.
 
     Returns
     -------
     Geometry
-        The resolved geometry.
+        The resolved geometry, with ``distances`` rebuilt when an override is set.
 
     Raises
     ------
     ValueError
-        If ``geometry`` is not a known geometry name.
+        If ``geometry`` is unknown, or an override is not positive.
     """
     if isinstance(geometry, Geometry):
-        return geometry
-    key = str(geometry).lower()
-    if key not in GEOMETRIES:
-        raise ValueError(
-            f"Unknown geometry {geometry!r}. Choose from {sorted(GEOMETRIES)}."
-        )
-    return GEOMETRIES[key]
+        base = geometry
+    else:
+        key = str(geometry).lower()
+        if key not in GEOMETRIES:
+            raise ValueError(
+                f"Unknown geometry {geometry!r}. Choose from {sorted(GEOMETRIES)}."
+            )
+        base = GEOMETRIES[key]
+
+    if max_distance is None and step is None:
+        return base
+    stop = base.distances[-1] if max_distance is None else max_distance
+    if step is None:
+        step = base.distances[1] - base.distances[0]
+    if stop <= 0 or step <= 0:
+        raise ValueError(f"max_distance and step must be positive, got {stop}, {step}.")
+    # +step/2 keeps the endpoint despite float drift; round clears arange noise.
+    return base._replace(distances=np.round(np.arange(0.0, stop + step / 2, step), 3))
 
 
 class Analyzer:
@@ -116,6 +148,13 @@ class Analyzer:
         Mg local resolution is reported as ``0``.
     geometry : str or Geometry, optional
         Scan geometry, ``"cone"`` (default) or ``"hemisphere"``.
+    max_distance : float or None, optional
+        Maximum distance of the scan grid, in ångström. When ``None`` (default)
+        the selected geometry keeps its built-in maximum. See :func:`get_geometry`.
+    step : float or None, optional
+        Spacing between successive scan distances, in ångström. When ``None``
+        (default) the selected geometry keeps its built-in step. See
+        :func:`get_geometry`.
 
     Attributes
     ----------
@@ -148,6 +187,8 @@ class Analyzer:
         reference: str,
         locres: str | None = None,
         geometry: "str | Geometry" = "cone",
+        max_distance: float | None = None,
+        step: float | None = None,
     ) -> None:
         validate_ref_substituent(reference)
 
@@ -156,7 +197,7 @@ class Analyzer:
         self.locres_file = locres
         self.out_dir = Path(outdir)
         self.ref_substituent = reference
-        self.geometry = get_geometry(geometry)
+        self.geometry = get_geometry(geometry, max_distance, step)
 
         self.chlorophylls: list[dict] | None = None
         self.results_df: pd.DataFrame | None = None

@@ -13,7 +13,14 @@ __version__ = "0.1.0"
 
 import argparse
 
-from .analyzer import GEOMETRIES, Analyzer, get_geometry, validate_ref_substituent
+from .analyzer import (
+    DEFAULT_MAX_DISTANCE,
+    DEFAULT_STEP,
+    GEOMETRIES,
+    Analyzer,
+    get_geometry,
+    validate_ref_substituent,
+)
 
 __all__ = ["Analyzer", "get_geometry", "main", "validate_ref_substituent"]
 
@@ -51,6 +58,23 @@ def main() -> None:
         choices=sorted(GEOMETRIES),
         help="Scan geometry: 'cone' (2-D, default) or 'hemisphere' (3-D)",
     )
+    parser.add_argument(
+        "-d",
+        "--max-distance",
+        type=float,
+        default=None,
+        help=(
+            "Maximum scan distance (angstrom). "
+            f"Default: {DEFAULT_MAX_DISTANCE} for both geometries."
+        ),
+    )
+    parser.add_argument(
+        "-t",
+        "--step",
+        type=float,
+        default=None,
+        help=f"Spacing between scan distances (angstrom). Default: {DEFAULT_STEP}.",
+    )
     args = parser.parse_args()
 
     analyzer = Analyzer(
@@ -60,5 +84,7 @@ def main() -> None:
         reference=args.reference,
         locres=args.locres,
         geometry=args.geometry,
+        max_distance=args.max_distance,
+        step=args.step,
     )
     analyzer.run()

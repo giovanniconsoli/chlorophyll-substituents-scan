@@ -29,6 +29,10 @@ Every output file is named `<model>_<geometry>_<kind>.pickle`, so the geometry i
 
 The algorithm is identical for both: a cone is simply the hemisphere restricted to one aperture. `cone` produces a 2-D NumPy array per DataFrame cell; `hemisphere` sweeps a range of apertures, adding an extra axis, so each cell is 3-D. The statistics, Z-scores and PDB export all work with either. A `hemisphere` run can share an output directory with a `cone` run without overwriting it.
 
+### Scan distances
+
+Both geometries scan the same distance grid by default: 0 to **2.5 Å** inclusive, in steps of **0.1 Å**. Override either end with `--max-distance` / `--step` (`max_distance=` / `step=` in the Python API); the grid always starts at 0 and includes the maximum.
+
 Moreover, it outputs a series of PDB files (2 for each chlorophyll substituent in the map) that can be used to visualize the raw ESP and the Z-scores of the ESP directly in [Chimera](https://www.rbvi.ucsf.edu/chimera/). To do this, open the map and the `.pdb` file of interest, select it and color it by B-factor.
 
 ### Installation
@@ -46,6 +50,7 @@ chlorophyll-analyzer \
     --outdir output/ \
     --reference C12 \
     --geometry cone \             # cone (default) or hemisphere
+    --max-distance 2.5 \          # optional, this is the default
     --locres path/to/locres.map   # optional
 ```
 
@@ -56,6 +61,8 @@ chlorophyll-analyzer \
 | outdir | `-o`, `--outdir` | yes | Output directory for the results |
 | reference | `-r`, `--reference` | yes | Reference substituent (`C2`, `C3`, `C7`, `C8`, `C12`) |
 | geometry | `-g`, `--geometry` | no | Scan geometry: `cone` (default) or `hemisphere` |
+| max distance | `-d`, `--max-distance` | no | Maximum scan distance in Å (default `2.5`) |
+| step | `-t`, `--step` | no | Spacing between scan distances in Å (default `0.1`) |
 | locres | `-l`, `--locres` | no | Local resolution map |
 
 The same interface is available as a module: `python -m chlorophyll_substituents_scan ...`.
