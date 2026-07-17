@@ -34,7 +34,6 @@ SUBSTITUENTS = ["C2", "C3", "C7", "C8", "C12"]
 # sweeps a range of apertures and therefore gains an extra array axis.
 class Geometry(NamedTuple):
     name: str
-    file_token: str
     apertures: np.ndarray
     distances: np.ndarray
     angles: np.ndarray
@@ -42,14 +41,12 @@ class Geometry(NamedTuple):
 
 CONE_GEOMETRY = Geometry(
     name="cone",
-    file_token="cone",
     apertures=np.array([120.0]),
     distances=np.arange(0, 2.6, 0.1),
     angles=np.arange(0, 360, 5),
 )
 HEMISPHERE_GEOMETRY = Geometry(
     name="hemisphere",
-    file_token="sphere",
     apertures=np.arange(90, 181, 10, dtype=float),
     distances=np.round(np.arange(0, 2.1, 0.1), 1),
     angles=np.arange(0, 360, 10, dtype=float),
@@ -337,21 +334,13 @@ class Analyzer:
         stats_df: pd.DataFrame,
         zscores_df: pd.DataFrame,
     ) -> None:
-        token = self.geometry.file_token
+        # Every file carries the geometry name, so runs of different geometries
+        # can share one output directory without overwriting each other.
+        stem = f"{base_filename}_{self.geometry.name}"
 
-        # Cone results use bare ``_stats``/``_zscores`` names; other geometries get a
-        # token prefix so runs of different geometries can share one output
-        # directory without overwriting each other.
-        stats_infix = "" if token == "cone" else f"{token}_"
-
-        _save_pickle(results_df, self.out_dir / f"{base_filename}_{token}data.pickle")
-        _save_pickle(
-            stats_df, self.out_dir / f"{base_filename}_{stats_infix}stats.pickle"
-        )
-        _save_pickle(
-            zscores_df,
-            self.out_dir / f"{base_filename}_{stats_infix}zscores.pickle",
-        )
+        _save_pickle(results_df, self.out_dir / f"{stem}_data.pickle")
+        _save_pickle(stats_df, self.out_dir / f"{stem}_stats.pickle")
+        _save_pickle(zscores_df, self.out_dir / f"{stem}_zscores.pickle")
 
     def _save_scan_pdb(
         self, chlorophylls: list[dict], zscores_df: pd.DataFrame
@@ -564,7 +553,7 @@ def _get_pdb_filepaths(
 ) -> list[Path]:
     geometry = get_geometry(geometry)
     filename = (
-        f"{geometry.file_token}_{chl['chl_id']}_"
+        f"{geometry.name}_{chl['chl_id']}_"
         f"{chl['chl_structure'].name}_{atom}_{substituent}"
     )
     return [

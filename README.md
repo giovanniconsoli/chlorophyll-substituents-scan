@@ -20,10 +20,12 @@ The analysis takes as input a PDB model (.pdb, .cif) and a CryoEM map (.map, .mr
 
 Two geometries are available via the `--geometry` flag (`geometry=` in the Python API):
 
-| Geometry | Grid | Array shape per substituent | Output token |
+| Geometry | Grid | Array shape per substituent | Output files |
 | --- | --- | --- | --- |
-| `cone` (default) | single 120° aperture × distance × angle | **2-D** `(distance, angle)` | `_conedata` / `_stats` / `_zscores` |
-| `hemisphere` | aperture (90–180°) × distance × angle | **3-D** `(aperture, distance, angle)` | `_spheredata` / `_sphere_stats` / `_sphere_zscores` |
+| `cone` (default) | single 120° aperture × distance × angle | **2-D** `(distance, angle)` | `_cone_data` / `_cone_stats` / `_cone_zscores` |
+| `hemisphere` | aperture (90–180°) × distance × angle | **3-D** `(aperture, distance, angle)` | `_hemisphere_data` / `_hemisphere_stats` / `_hemisphere_zscores` |
+
+Every output file is named `<model>_<geometry>_<kind>.pickle`, so the geometry is always visible in the filename.
 
 The algorithm is identical for both: a cone is simply the hemisphere restricted to one aperture. `cone` produces a 2-D NumPy array per DataFrame cell; `hemisphere` sweeps a range of apertures, adding an extra axis, so each cell is 3-D. The statistics, Z-scores and PDB export all work with either. A `hemisphere` run can share an output directory with a `cone` run without overwriting it.
 
