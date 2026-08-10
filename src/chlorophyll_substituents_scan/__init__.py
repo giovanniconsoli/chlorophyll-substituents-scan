@@ -8,7 +8,7 @@ __email__ = "gconsoli@ic.ac.uk"
 __license__ = "MIT"
 __maintainer__ = "Giovanni Consoli"
 __status__ = "Production"
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 import argparse
