@@ -359,17 +359,9 @@ class Analyzer:
         return stats_df
 
     def _get_zscores_df(self, df: pd.DataFrame, stats_df: pd.DataFrame) -> pd.DataFrame:
-        ref_substituent = self.ref_substituent
-        zscores_df = pd.DataFrame(index=df.index, columns=SUBSTITUENTS)
-
-        for row_idx, row in df.iterrows():
-            for substituent in SUBSTITUENTS:
-                z = (
-                    row[substituent] - stats_df.loc["Average", ref_substituent]
-                ) / stats_df.loc["Standard Deviation", ref_substituent]
-                zscores_df.loc[row_idx, substituent] = z
-
-        return zscores_df
+        avg = stats_df.loc["Average", self.ref_substituent]
+        std = stats_df.loc["Standard Deviation", self.ref_substituent]
+        return df[SUBSTITUENTS].map(lambda grid: (grid - avg) / std)
 
     def _create_output_directories(self) -> None:
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -556,43 +548,11 @@ def _save_pickle(data: pd.DataFrame, filename: Path) -> None:
 
 
 def _mock_pdb(n: int, resi: int, x: float, y: float, z: float, temp: float) -> str:
-    return _pdb_string(
-        "ATOM",  # atom
-        n,
-        "CA",  # name
-        "",  # alt_loc
-        "UNK",  # res_name
-        "A",  # chain
-        resi,
-        "",  # ins
-        x,
-        y,
-        z,
-        1.00,  # occ
-        temp,
-    )
-
-
-def _pdb_string(
-    atom: str,
-    serial: int,
-    name: str,
-    alt_loc: str,
-    res_name: str,
-    chain: str,
-    resi: int,
-    ins: str,
-    x: float,
-    y: float,
-    z: float,
-    occ: float,
-    temp: float,
-) -> str:
-    # https://cupnet.net/pdb-format/
+    # Fixed-column PDB ATOM record: https://cupnet.net/pdb-format/
     return (
-        f"{atom:6s}{serial:5d} {name:^4s}{alt_loc:1s}{res_name:3s} "
-        f"{chain:1s}{resi:4d}{ins:1s}   "
-        f"{x:8.3f}{y:8.3f}{z:8.3f}{occ:6.2f}{temp:6.2f}\n"
+        f"ATOM  {n:5d}  CA  UNK "  # record, serial, name, altLoc, resName
+        f"A{resi:4d}    "  # chain, resSeq, iCode
+        f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00{temp:6.2f}\n"  # x, y, z, occupancy, temp
     )
 
 
